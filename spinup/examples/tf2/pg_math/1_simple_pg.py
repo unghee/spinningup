@@ -8,12 +8,14 @@ from gym.spaces import Discrete, Box
 
 def mlp(sizes, activation='tanh', output_activation='linear'):
     # Build a feedforward neural network.
-    layers = []
-    layers += [tf.keras.Input(shape=(sizes[0]))]
+
+    model = tf.keras.Sequential()
+    model.add(tf.keras.Input(shape=(sizes[0],)))
+
     for j in range(len(sizes)-1):
         act = activation if j < len(sizes)-2 else output_activation
-        layers += [tf.keras.layers.Dense(sizes[j+1], act)]
-    return tf.keras.Sequential(layers)
+        model.add(tf.keras.layers.Dense(sizes[j+1], act))
+    return model
 
 def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2, 
           epochs=50, batch_size=5000, render=False):
@@ -43,7 +45,7 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
     # make loss function whose gradient, for the right data, is policy gradient
     def compute_loss(obs, act, weights):
         logp = get_policy(obs).log_prob(act)
-        return -(logp * weights).mean() 
+        return -tf.reduce_mean(logp * weights)
 
     # make optimizer
     optimizer = Adam(learning_rate=lr)
@@ -73,11 +75,13 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                 env.render()
 
             # save obs
+            obs=np.reshape(obs,(-1,np.shape(obs)[0]))
             batch_obs.append(obs.copy())
-
+   
+            
             # act in the environment
             act = get_action(tf.convert_to_tensor(obs, dtype=tf.float32))
-            obs, rew, done, _ = env.step(act)
+            obs, rew, done, _ = env.step(act[0])
 
             # save action, reward
             batch_acts.append(act)
@@ -107,8 +111,8 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                                   act=tf.convert_to_tensor(batch_acts, dtype=tf.int32),
                                   weights=tf.convert_to_tensor(batch_weights, dtype=tf.float32)
                                   )
-        var_list_fn = lambda: logits_net.trainable_weights 
-        optimizer.minimize(batch_loss, var_list_fn)
+
+        logits_net.compile(loss=batch_loss,optimizer=optimizer)
 
         return batch_loss, batch_rets, batch_lens
 
