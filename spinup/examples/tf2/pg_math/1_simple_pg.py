@@ -33,7 +33,8 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 
     # make function to compute action distribution
     def get_policy(obs):
-        logits = logits_net(obs, training=True)[0]
+        logits = logits_net(obs, training=True)
+        # logits = tf.squeeze(logits, axis=0)
         return tfp.distributions.Categorical(logits=logits,dtype=tf.float32)
 
     # make action selection function (outputs int actions, sampled from policy)
@@ -44,6 +45,12 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
     def compute_loss(obs, act, weights):
         logp = get_policy(obs).log_prob(act)
         return -tf.reduce_mean(logp * weights)
+    def reward_to_go(rews):
+        n = len(rews)
+        rtgs = np.zeros_like(rews)
+        for i in reversed(range(n)):
+            rtgs[i] = rews[i] + (rtgs[i+1] if i+1 < n else 0)
+        return rtgs
 
     # make optimizer
     optimizer = Adam(learning_rate=lr)
@@ -74,11 +81,11 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 
             # save obs
             # obs=np.reshape(obs,(-1,np.shape(obs)[0]))
-            obs= np.reshape(obs,(-1, obs_dim))
+            # obs= np.reshape(obs,(-1, obs_dim))
             batch_obs.append(obs.copy())
    
             # act in the environment
-            act = get_action(obs)
+            act = get_action(np.reshape(obs,(-1, obs_dim)))
             # act = get_action(tf.convert_to_tensor(obs, dtype=tf.float32))
             obs, rew, done, _ = env.step(act)
 
@@ -92,8 +99,10 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                 batch_rets.append(ep_ret)
                 batch_lens.append(ep_len)
 
-                # the weight for each logprob(a|s) is R(tau)
+                # # the weight for each logprob(a|s) is R(tau)
                 batch_weights += [ep_ret] * ep_len
+                # the weight for each logprob(a_t|s_t) is reward-to-go from t
+                # batch_weights += list(reward_to_go(ep_rews))
 
                 # reset episode-specific variables
                 obs, done, ep_rews = env.reset(), False, []
@@ -111,8 +120,10 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                 act=tf.convert_to_tensor(batch_acts, dtype=tf.int32),
                 weights=tf.convert_to_tensor(batch_weights, dtype=tf.float32)
                 )
-        gradients = tape.gradient(batch_loss, logits_net.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, logits_net.trainable_variables))
+        # var_list_fn = lambda: model.trainable_weights
+        optimizer.minimize(loss=batch_loss,var_list=logits_net.trainable_variables,tape=tape)
+        # gradients = tape.gradient(batch_loss, logits_net.trainable_variables)
+        # optimizer.apply_gradients(zip(gradients, logits_net.trainable_variables))
 
         # logits_net.compile(loss=batch_loss,optimizer=optimizer)
 
