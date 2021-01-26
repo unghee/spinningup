@@ -6,15 +6,13 @@ import numpy as np
 import gym
 from gym.spaces import Discrete, Box
 
-def mlp(sizes, activation='tanh', output_activation='linear'):
+def mlp(sizes, activation='relu', output_activation='linear'):
     # Build a feedforward neural network.
-
     model = tf.keras.Sequential()
-    model.add(tf.keras.Input(shape=(sizes[0],)))
 
     for j in range(len(sizes)-1):
         act = activation if j < len(sizes)-2 else output_activation
-        model.add(tf.keras.layers.Dense(sizes[j+1], act))
+        model.add(tf.keras.layers.Dense(sizes[j+1], activation=act))
     return model
 
 def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2, 
@@ -35,12 +33,12 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 
     # make function to compute action distribution
     def get_policy(obs):
-        logits = logits_net(obs)
-        return tfp.distributions.Categorical(logits=logits)
+        logits = logits_net(obs, training=True)[0]
+        return tfp.distributions.Categorical(logits=logits,dtype=tf.float32)
 
     # make action selection function (outputs int actions, sampled from policy)
     def get_action(obs):
-        return get_policy(obs).sample().numpy()
+        return int(get_policy(obs).sample().numpy())
 
     # make loss function whose gradient, for the right data, is policy gradient
     def compute_loss(obs, act, weights):
@@ -75,13 +73,14 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                 env.render()
 
             # save obs
-            obs=np.reshape(obs,(-1,np.shape(obs)[0]))
+            # obs=np.reshape(obs,(-1,np.shape(obs)[0]))
+            obs= np.reshape(obs,(-1, obs_dim))
             batch_obs.append(obs.copy())
    
-            
             # act in the environment
-            act = get_action(tf.convert_to_tensor(obs, dtype=tf.float32))
-            obs, rew, done, _ = env.step(act[0])
+            act = get_action(obs)
+            # act = get_action(tf.convert_to_tensor(obs, dtype=tf.float32))
+            obs, rew, done, _ = env.step(act)
 
             # save action, reward
             batch_acts.append(act)
@@ -107,12 +106,15 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
                     break
 
         # take a single policy gradient update step
-        batch_loss = compute_loss(obs=tf.convert_to_tensor(batch_obs, dtype=tf.float32),
-                                  act=tf.convert_to_tensor(batch_acts, dtype=tf.int32),
-                                  weights=tf.convert_to_tensor(batch_weights, dtype=tf.float32)
-                                  )
+        with tf.GradientTape() as tape:
+            batch_loss = compute_loss(obs=tf.convert_to_tensor(batch_obs, dtype=tf.float32),
+                act=tf.convert_to_tensor(batch_acts, dtype=tf.int32),
+                weights=tf.convert_to_tensor(batch_weights, dtype=tf.float32)
+                )
+        gradients = tape.gradient(batch_loss, logits_net.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, logits_net.trainable_variables))
 
-        logits_net.compile(loss=batch_loss,optimizer=optimizer)
+        # logits_net.compile(loss=batch_loss,optimizer=optimizer)
 
         return batch_loss, batch_rets, batch_lens
 
